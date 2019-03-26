@@ -32,6 +32,9 @@ def parse_arguments():
     parser.add_argument('-d','--downsample', default=2, type=int,
                         help='factor by which to downsample distances ' +
                         'to save memory/time in density calculation')
+    parser.add_argument('-r','--replicates', default=1, type=int,
+                        help='number of replicates to average in ' +
+                        'crowding calculations')
 
     return(parser.parse_args())
 
@@ -70,10 +73,11 @@ def get_local_density(
     return(pd.DataFrame(d))
 
 
+# TODO: implement replicates and averaging for local crowding
 def get_local_crowding(
         features, image_shape,
         global_centroid_name_y, global_centroid_name_x,
-        object_type, deterministic=False):
+        object_type, deterministic=False, reps=1):
 
     if (deterministic):
         random.seed(123)
@@ -163,7 +167,8 @@ def calculate_popcon_features(
         centroid_name_y, centroid_name_x,
         image_size_y=2560, image_size_x=2160,
         downsample_factor=1,
-        object_name="Cells"):
+        object_name="Cells",
+        reps=1):
 
     image_shape = (image_size_y, image_size_x)
     metadata = pd.read_csv(
@@ -205,7 +210,7 @@ def calculate_popcon_features(
         global_coordinates.df, well_shape,
         global_coordinates.centroid_name_y,
         global_coordinates.centroid_name_x,
-        object_name,deterministic=True,reps=4)
+        object_name,deterministic=True,reps=reps)
 
     popcon_features = local_cell_density_100.merge(
         local_cell_density_200,on='mapobject_id')
@@ -252,7 +257,8 @@ def main(args):
         [args.image_size_y for f in features_paths],
         [args.image_size_x for f in features_paths],
         [args.downsample for f in features_paths],
-        [args.centroid_object for f in features_paths]
+        [args.centroid_object for f in features_paths],
+        [args.replicates for f in features_paths]
     )
 
     # use a multi-processing pool to get the work done
