@@ -31,7 +31,7 @@ def parse_arguments():
                         help='x-dimension of image (pixels)')
     parser.add_argument('-d','--downsample', default=2, type=int,
                         help='factor by which to downsample distances ' +
-                        'to save memory in calculation')
+                        'to save memory/time in density calculation')
 
     return(parser.parse_args())
 
@@ -39,7 +39,7 @@ def parse_arguments():
 def get_local_density(
         features, image_shape, downsample_factor,
         global_centroid_name_y, global_centroid_name_x,
-        object_type, radius=80):
+        object_type, radius=100):
 
     resized_image_shape = (int(image_shape[0] / downsample_factor),
                            int(image_shape[1] / downsample_factor))
@@ -54,11 +54,9 @@ def get_local_density(
             int(getattr(row, global_centroid_name_x) / downsample_factor)] = 1
 
     # blur the dot image using a gaussian filter
-    print(dot_image.shape, "applying_blur")
     gaussian_image = gaussian_filter(
         dot_image,
         sigma=int(radius / downsample_factor))
-    print("blur done")
 
     # measure the blurred_image
     d = []
@@ -86,12 +84,10 @@ def get_local_crowding(
 
     lcc = []
     for row in features.itertuples():
-        random_centroids_y = random.sample(
-            getattr(features.drop(row.Index), global_centroid_name_y),
-            len(features.drop(row.Index).index))
-        random_centroids_x = random.sample(
-            getattr(features.drop(row.Index), global_centroid_name_x),
-            len(features.drop(row.Index).index))
+        random_centroids_y = np.random.randint(
+            0,image_shape[0],size=len(features)-1)
+        random_centroids_x = np.random.randint(
+            0,image_shape[1],size=len(features)-1)
 
         # find distances from current cell to random cells
         random_distances = cdist(
@@ -187,26 +183,34 @@ def calculate_popcon_features(
         centroid_name_y, centroid_name_x
     )
 
-    local_cell_density_80 = get_local_density(
+    local_cell_density_100 = get_local_density(
         global_coordinates.df,
         well_shape, downsample_factor,
         global_coordinates.centroid_name_y,
         global_coordinates.centroid_name_x,
-        object_name,radius=80)
-    local_cell_density_160 = get_local_density(
+        object_name,radius=100)
+    local_cell_density_200 = get_local_density(
         global_coordinates.df,
         well_shape, downsample_factor,
         global_coordinates.centroid_name_y,
         global_coordinates.centroid_name_x,
-        object_name,radius=160)
+        object_name,radius=200)
+    local_cell_density_300 = get_local_density(
+        global_coordinates.df,
+        well_shape, downsample_factor,
+        global_coordinates.centroid_name_y,
+        global_coordinates.centroid_name_x,
+        object_name,radius=300)
     local_cell_crowding = get_local_crowding(
         global_coordinates.df, well_shape,
         global_coordinates.centroid_name_y,
         global_coordinates.centroid_name_x,
-        object_name,deterministic=True)
+        object_name,deterministic=True,reps=4)
 
-    popcon_features = local_cell_density_80.merge(
-        local_cell_density_160,on='mapobject_id')
+    popcon_features = local_cell_density_100.merge(
+        local_cell_density_200,on='mapobject_id')
+    popcon_features = popcon_features.merge(
+        local_cell_density_300,on='mapobject_id')
     popcon_features = popcon_features.merge(
         local_cell_crowding, on='mapobject_id')
     popcon_features = popcon_features.merge(
