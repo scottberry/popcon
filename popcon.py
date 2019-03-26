@@ -1,12 +1,14 @@
 import os
 import argparse
 import glob
+import random
 import numpy as np
 import pandas as pd
 import multiprocessing as mp
+from math import sqrt, pow
 from collections import namedtuple
 from scipy.ndimage import gaussian_filter
-from subprocess import check_call, CalledProcessError
+from scipy.spatial.distance import cdist
 
 
 def parse_arguments():
@@ -34,26 +36,29 @@ def parse_arguments():
     return(parser.parse_args())
 
 
-def get_local_cell_density(
+def get_local_density(
         features, image_shape, downsample_factor,
         global_centroid_name_y, global_centroid_name_x,
-        radius=80):
+        object_type, radius=80):
 
     resized_image_shape = (int(image_shape[0] / downsample_factor),
                            int(image_shape[1] / downsample_factor))
 
     dot_image = np.zeros(shape=resized_image_shape, dtype=np.float64)
-    feature_name = "Local_Cell_Density_" + str(radius)
+    feature_name = "LocalDensity_" + object_type + "_" + str(radius)
 
     # create a dot image of the features
     for row in features.itertuples():
-        dot_image[int(getattr(row, global_centroid_name_y) / downsample_factor),
-                  int(getattr(row, global_centroid_name_x) / downsample_factor)] = 1
+        dot_image[
+            int(getattr(row, global_centroid_name_y) / downsample_factor),
+            int(getattr(row, global_centroid_name_x) / downsample_factor)] = 1
 
     # blur the dot image using a gaussian filter
-    print dot_image.shape, "applying_blur"
-    gaussian_image = gaussian_filter(dot_image, sigma=int(radius / downsample_factor))
-    print "blur done"
+    print(dot_image.shape, "applying_blur")
+    gaussian_image = gaussian_filter(
+        dot_image,
+        sigma=int(radius / downsample_factor))
+    print("blur done")
 
     # measure the blurred_image
     d = []
@@ -65,6 +70,67 @@ def get_local_cell_density(
             'mapobject_id': row.mapobject_id})
 
     return(pd.DataFrame(d))
+
+
+def get_local_crowding(
+        features, image_shape,
+        global_centroid_name_y, global_centroid_name_x,
+        object_type, deterministic=False):
+
+    if (deterministic):
+        random.seed(123)
+
+    maximal_distance = sqrt(
+        pow(float(image_shape[0]),2) + pow(float(image_shape[1]),2))
+    feature_name = "LocalCrowding_" + object_type
+
+    lcc = []
+    for row in features.itertuples():
+        random_centroids_y = random.sample(
+            getattr(features.drop(row.Index), global_centroid_name_y),
+            len(features.drop(row.Index).index))
+        random_centroids_x = random.sample(
+            getattr(features.drop(row.Index), global_centroid_name_x),
+            len(features.drop(row.Index).index))
+
+        # find distances from current cell to random cells
+        random_distances = cdist(
+            np.column_stack(
+                [getattr(row, global_centroid_name_y),
+                 getattr(row, global_centroid_name_x)]
+            ),
+            np.column_stack(
+                [random_centroids_y,
+                 random_centroids_x]
+            ),
+            metric='euclidean')
+
+        # find distances from current cell to real cells
+        real_distances = cdist(
+            np.column_stack(
+                [getattr(row, global_centroid_name_y),
+                 getattr(row, global_centroid_name_x)]
+            ),
+            np.column_stack(
+                [getattr(features.drop(row.Index), global_centroid_name_y),
+                 getattr(features.drop(row.Index), global_centroid_name_x)]
+            ),
+            metric='euclidean')
+
+        # invert distances to get "crowding"
+        inverse_random_distances = np.divide(
+            np.full_like(random_distances, fill_value=maximal_distance),
+            random_distances)
+        inverse_real_distances = np.divide(
+            np.full_like(real_distances, fill_value=maximal_distance),
+            real_distances)
+
+        lcc.append({
+            feature_name:
+                np.sum(inverse_real_distances) - np.sum(inverse_random_distances),
+            'mapobject_id': row.mapobject_id})
+
+    return(pd.DataFrame(lcc))
 
 
 def convert_local_to_global_centroids(
@@ -100,7 +166,8 @@ def calculate_popcon_features(
         features_filename, metadata_filename,
         centroid_name_y, centroid_name_x,
         image_size_y=2560, image_size_x=2160,
-        downsample_factor=1):
+        downsample_factor=1,
+        object_name="Cells"):
 
     image_shape = (image_size_y, image_size_x)
     metadata = pd.read_csv(
@@ -120,21 +187,28 @@ def calculate_popcon_features(
         centroid_name_y, centroid_name_x
     )
 
-    local_cell_density_80 = get_local_cell_density(
+    local_cell_density_80 = get_local_density(
         global_coordinates.df,
         well_shape, downsample_factor,
         global_coordinates.centroid_name_y,
-        global_coordinates.centroid_name_x, radius=80)
-    local_cell_density_160 = get_local_cell_density(
+        global_coordinates.centroid_name_x,
+        object_name,radius=80)
+    local_cell_density_160 = get_local_density(
         global_coordinates.df,
         well_shape, downsample_factor,
         global_coordinates.centroid_name_y,
-        global_coordinates.centroid_name_x, radius=160)
-#    local_cell_crowding = get_local_cell_crowding(
-#        global_coordinates, well_shape)
+        global_coordinates.centroid_name_x,
+        object_name,radius=160)
+    local_cell_crowding = get_local_crowding(
+        global_coordinates.df, well_shape,
+        global_coordinates.centroid_name_y,
+        global_coordinates.centroid_name_x,
+        object_name,deterministic=True)
 
     popcon_features = local_cell_density_80.merge(
         local_cell_density_160,on='mapobject_id')
+    popcon_features = popcon_features.merge(
+        local_cell_crowding, on='mapobject_id')
     popcon_features = popcon_features.merge(
         global_coordinates.df, on='mapobject_id')
 
@@ -173,7 +247,8 @@ def main(args):
         [local_centroid_name_x for f in features_paths],
         [args.image_size_y for f in features_paths],
         [args.image_size_x for f in features_paths],
-        [args.downsample for f in features_paths]
+        [args.downsample for f in features_paths],
+        [args.centroid_object for f in features_paths]
     )
 
     # use a multi-processing pool to get the work done
