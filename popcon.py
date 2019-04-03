@@ -5,6 +5,7 @@ import random
 import numpy as np
 import pandas as pd
 import multiprocessing as mp
+from scipy import integrate
 from math import sqrt, pow
 from collections import namedtuple
 from scipy.ndimage import gaussian_filter
@@ -19,6 +20,7 @@ def parse_arguments():
                      ' from feature-values and metadata csv files.'
                      )
     )
+    parser.add_argument('--verbose', '-v', action='count')
     parser.add_argument('source_dir', help='path to source directory')
     parser.add_argument('target_dir', help='path to destination directory')
     parser.add_argument('-m','--main_object', default="Cells", type=str,
@@ -32,9 +34,6 @@ def parse_arguments():
     parser.add_argument('-d','--downsample', default=2, type=int,
                         help='factor by which to downsample distances ' +
                         'to save memory/time in density calculation')
-    parser.add_argument('-r','--replicates', default=1, type=int,
-                        help='number of replicates to average in ' +
-                        'crowding calculations')
 
     return(parser.parse_args())
 
@@ -43,6 +42,10 @@ def get_local_density(
         features, image_shape, downsample_factor,
         global_centroid_name_y, global_centroid_name_x,
         object_type, radius=100):
+    """
+    Returns a DataFrame containing the mapobject_id and the object
+    density with column label "LocalDensity" + object_type + radius
+    """
 
     resized_image_shape = (int(image_shape[0] / downsample_factor),
                            int(image_shape[1] / downsample_factor))
@@ -73,25 +76,94 @@ def get_local_density(
     return(pd.DataFrame(d))
 
 
+def mean_euclidean_distance(x_i, y_i, x_max, y_max):
+    """
+    Returns the mean euclidean distance from a point (x_i,y_i) to
+    all other points in the rectangle with vertices (0,0),(x_max,y_max)
+    """
+
+    d = integrate.dblquad(lambda x, y: np.sqrt((x - x_i)**2 + (y - y_i)**2),
+                          0, y_max,
+                          0, x_max)
+    area = x_max * y_max
+    return d[0] / area
+
+
+def get_crowding(
+        features, image_shape,
+        global_centroid_name_y, global_centroid_name_x,
+        object_type):
+    """
+    Returns a DataFrame containing the mapobject_id and the object
+    crowding with column label "Crowding" + object_type
+    """
+
+    feature_name = "Crowding_" + object_type
+
+    crowding_list = []
+    for row in features.itertuples():
+
+        # find distances from current cell to all other cells
+        real_distances = cdist(
+            np.column_stack(
+                [getattr(row, global_centroid_name_y),
+                 getattr(row, global_centroid_name_x)]
+            ),
+            np.column_stack(
+                [getattr(features.drop(row.Index), global_centroid_name_y),
+                 getattr(features.drop(row.Index), global_centroid_name_x)]
+            ),
+            metric='euclidean')
+
+        # find expected mean distance to all other points in the domain
+        expected_mean_distance = mean_euclidean_distance(
+            getattr(row, global_centroid_name_x),
+            getattr(row, global_centroid_name_y),
+            int(image_shape[1]),
+            int(image_shape[0]))
+
+        # invert real distances to get crowding
+        inverse_real_distances = np.divide(
+            np.ones_like(real_distances),
+            real_distances)
+
+        # normalise by the expected distance to other objects
+        crowding = np.mean(inverse_real_distances) * expected_mean_distance
+
+        crowding_list.append({
+            feature_name: crowding,
+            'mean_distance': expected_mean_distance,
+            'mapobject_id': row.mapobject_id})
+
+    return(pd.DataFrame(crowding_list))
+
+
+# Note that this function is not currently called by main because it
+# is not deterministic and generates large random errors due to the
+# numerical 1/distance step.
+#
 # TODO: implement replicates and averaging for local crowding
-def get_local_crowding(
+def get_local_cell_crowding(
         features, image_shape,
         global_centroid_name_y, global_centroid_name_x,
         object_type, deterministic=False, reps=1):
-
+    """
+    Returns a DataFrame containing the mapobject_id and the object
+    local crowding with column label "LCC" + object_type.
+    """
     if (deterministic):
         random.seed(123)
 
     maximal_distance = sqrt(
         pow(float(image_shape[0]),2) + pow(float(image_shape[1]),2))
-    feature_name = "LocalCrowding_" + object_type
+    feature_name = "LCC_" + object_type
 
     lcc = []
     for row in features.itertuples():
         random_centroids_y = np.random.randint(
-            0,image_shape[0],size=len(features)-1)
+            0, image_shape[0], size=len(features) - 1)
         random_centroids_x = np.random.randint(
-            0,image_shape[1],size=len(features)-1)
+            0, image_shape[1], size=len(features) - 1)
 
         # find distances from current cell to random cells
         random_distances = cdist(
@@ -167,8 +239,7 @@ def calculate_popcon_features(
         centroid_name_y, centroid_name_x,
         image_size_y=2560, image_size_x=2160,
         downsample_factor=1,
-        object_name="Cells",
-        reps=1):
+        object_name="Cells"):
 
     image_shape = (image_size_y, image_size_x)
     metadata = pd.read_csv(
@@ -187,7 +258,6 @@ def calculate_popcon_features(
         features, metadata, image_shape,
         centroid_name_y, centroid_name_x
     )
-
     local_cell_density_100 = get_local_density(
         global_coordinates.df,
         well_shape, downsample_factor,
@@ -206,18 +276,24 @@ def calculate_popcon_features(
         global_coordinates.centroid_name_y,
         global_coordinates.centroid_name_x,
         object_name,radius=300)
-    local_cell_crowding = get_local_crowding(
+#    local_cell_crowding = get_local_cell_crowding(
+#        global_coordinates.df, well_shape,
+#        global_coordinates.centroid_name_y,
+#        global_coordinates.centroid_name_x,
+#        object_name,deterministic=True,reps=reps)
+    crowding = get_crowding(
         global_coordinates.df, well_shape,
         global_coordinates.centroid_name_y,
         global_coordinates.centroid_name_x,
-        object_name,deterministic=True,reps=reps)
+        object_name)
 
-    popcon_features = local_cell_density_100.merge(
+    popcon_features = local_cell_density_100
+    popcon_features = popcon_features.merge(
         local_cell_density_200,on='mapobject_id')
     popcon_features = popcon_features.merge(
         local_cell_density_300,on='mapobject_id')
     popcon_features = popcon_features.merge(
-        local_cell_crowding, on='mapobject_id')
+        crowding, on='mapobject_id')
     popcon_features = popcon_features.merge(
         global_coordinates.df, on='mapobject_id')
 
@@ -248,6 +324,10 @@ def main(args):
         local_centroid_name_y = args.centroid_object + '_Morphology_Local_Centroid_y'
         local_centroid_name_x = args.centroid_object + '_Morphology_Local_Centroid_x'
 
+    # use a multi-processing pool to get the work done
+    # this requires zipping the arguments and passing to a
+    # "star" function
+
     zipped_args = zip(
         [args.target_dir for f in features_paths],
         features_paths,
@@ -257,11 +337,9 @@ def main(args):
         [args.image_size_y for f in features_paths],
         [args.image_size_x for f in features_paths],
         [args.downsample for f in features_paths],
-        [args.centroid_object for f in features_paths],
-        [args.replicates for f in features_paths]
+        [args.centroid_object for f in features_paths]
     )
 
-    # use a multi-processing pool to get the work done
     pool = mp.Pool()
     pool.map(
         calculate_popcon_features_star,
@@ -271,6 +349,7 @@ def main(args):
     pool.join()
 
     return
+
 
 if __name__ == "__main__":
     args = parse_arguments()
