@@ -3,6 +3,7 @@ import argparse
 import glob
 import time
 import random
+import logging
 import numpy as np
 import pandas as pd
 import multiprocessing as mp
@@ -12,35 +13,9 @@ from math import sqrt, pow
 from collections import namedtuple
 from scipy.ndimage import gaussian_filter
 from scipy.spatial.distance import cdist
+from MultiProcessingLog import MultiProcessingLog
 
-
-def parse_arguments():
-    parser = argparse.ArgumentParser(
-        prog='popcon',
-        description=('Generates a csv file containing'
-                     ' population context features derived'
-                     ' from feature-values and metadata csv files.'
-                     )
-    )
-    parser.add_argument('--verbose', '-v', action='count')
-    parser.add_argument('--parallel', action='store_true', default=False)
-    parser.add_argument('source_dir', help='path to source directory')
-    parser.add_argument('target_dir', help='path to destination directory')
-    parser.add_argument('-m','--main_object', default="Cells", type=str,
-                        help='main object which labels the feature files')
-    parser.add_argument('-c','--centroid_object', default="Nuclei", type=str,
-                        help='object from which centroids should be taken')
-    parser.add_argument('-y','--image_size_y', default=2160, type=int,
-                        help='x-dimension of image (pixels)')
-    parser.add_argument('-x','--image_size_x', default=2560, type=int,
-                        help='x-dimension of image (pixels)')
-    parser.add_argument('-r','--radii', nargs='*', default=[],
-                        help='List of radii (pixels) for density calculations')
-    parser.add_argument('-d','--downsample', default=2, type=int,
-                        help='factor by which to downsample distances ' +
-                        'to save memory/time in density calculation')
-
-    return(parser.parse_args())
+logger = logging.getLogger()
 
 
 def get_local_density(
@@ -54,30 +29,30 @@ def get_local_density(
 
     resized_image_shape = (int(image_shape[0] / downsample_factor),
                            int(image_shape[1] / downsample_factor))
+    logger.debug('resized_image_shape: {}'.format(resized_image_shape))
 
     dot_image = np.zeros(shape=resized_image_shape, dtype=np.float64)
     feature_name = "LocalDensity_" + object_type + "_" + str(radius)
 
-    # create a dot image of the features
     for row in features.itertuples():
+        logger.debug('Generating dot_image for object {}'.format(row.Index))
         dot_image[
             int(getattr(row, global_centroid_name_y) / downsample_factor),
             int(getattr(row, global_centroid_name_x) / downsample_factor)] = 1
 
-    # blur the dot image using a gaussian filter
+    logger.debug('Blurring dot_image with radius {}'.format(radius))
     gaussian_image = gaussian_filter(
         dot_image,
         sigma=int(radius / downsample_factor))
 
-    # measure the blurred_image
     d = []
     for row in features.itertuples():
+        logger.debug('Measuring blurred image for object {} at radius {}'.format(row.Index, radius))
         d.append({
             feature_name: gaussian_image[
                 int(getattr(row, global_centroid_name_y) / downsample_factor),
                 int(getattr(row, global_centroid_name_x) / downsample_factor)],
             'mapobject_id': row.mapobject_id})
-
     return(pd.DataFrame(d))
 
 
@@ -106,7 +81,7 @@ def get_crowding(
 
     crowding_list = []
     for row in features.itertuples():
-
+        logger.debug('Calculating crowding for cell {}'.format(row.Index))
         # find distances from current cell to all other cells
         real_distances = cdist(
             np.column_stack(
@@ -212,6 +187,7 @@ def convert_local_to_global_centroids(
         local_features, local_metadata, image_shape,
         centroid_name_y, centroid_name_x):
 
+    logger.debug('Converting to global coordinates')
     global_centroids = namedtuple(
         'global_centroids', ['df','centroid_name_y','centroid_name_x']
     )
@@ -245,6 +221,16 @@ def calculate_popcon_features(
         object_name="Cells",
         radii=[100,200,300]):
 
+    logger.info('Calculating popcon features')
+    logger.info('features_filename: %s', features_filename)
+    logger.info('metadata_filename: %s', metadata_filename)
+    logger.info('target_dir: %s', target_dir)
+    logger.info('downsample_factor: %d', downsample_factor)
+    logger.info('object_name: %s', object_name)
+    logger.info('radii: {}'.format(radii))
+    logger.info('centroid_name_y: %s',centroid_name_y)
+    logger.info('centroid_name_x: %s',centroid_name_x)
+
     image_shape = (image_size_y, image_size_x)
     metadata = pd.read_csv(
         metadata_filename,
@@ -253,10 +239,12 @@ def calculate_popcon_features(
         features_filename,
         usecols=['mapobject_id', centroid_name_y, centroid_name_x])
 
+    logger.debug('Extracting well_shape from metadata_file:')
     well_shape = (
         int(image_size_y * (1 + metadata.well_pos_y.max())),
         int(image_size_x * (1 + metadata.well_pos_x.max()))
     )
+    logger.info('Well shape is {}'.format(well_shape))
 
     global_coordinates = convert_local_to_global_centroids(
         features, metadata, image_shape,
@@ -269,16 +257,24 @@ def calculate_popcon_features(
         global_coordinates.centroid_name_x,
         object_name)
 
+    logger.info('Finished crowding calculation for: {}'.format(features_filename))
+
     popcon_features = global_coordinates.df.merge(
         crowding,on='mapobject_id')
 
     for radius in radii:
+        logger.debug(
+            'At Radius {}, calculating object density for: {}'.format(radius, features_filename)
+        )
         local_density = get_local_density(
             global_coordinates.df,
             well_shape, downsample_factor,
             global_coordinates.centroid_name_y,
             global_coordinates.centroid_name_x,
-            object_name,radius=radius)
+            object_name,radius=int(radius))
+
+        logger.info('At Radius {}, finished density calculation for: {}'.format(radius,features_filename))
+
         popcon_features = popcon_features.merge(
             local_density,on='mapobject_id')
 
@@ -296,8 +292,15 @@ def calculate_popcon_features_star(args):
 
 def main(args):
 
-    features_files = [os.path.basename(full_path) for full_path in glob.glob(args.source_dir + '/*' + args.main_object + '_feature-values.csv')]
-    metadata_files = [f.replace('feature-values','metadata') for f in features_files]
+    features_files = [
+        os.path.basename(full_path) for full_path in
+        glob.glob(
+            args.source_dir +
+            '/*' +
+            args.main_object +
+            '_feature-values.csv')]
+    metadata_files = [f.replace('feature-values','metadata')
+                      for f in features_files]
 
     features_paths = [os.path.join(args.source_dir,f) for f in features_files]
     metadata_paths = [os.path.join(args.source_dir,f) for f in metadata_files]
@@ -308,6 +311,10 @@ def main(args):
     else:
         local_centroid_name_y = args.centroid_object + '_Morphology_Local_Centroid_y'
         local_centroid_name_x = args.centroid_object + '_Morphology_Local_Centroid_x'
+
+    if not os.path.exists(args.target_dir):
+        logger.info('Creating popcon results folder {}'.format(args.target_dir))
+        os.makedirs(args.target_dir)
 
     # use a multi-processing pool to get the work done
     # this requires zipping the arguments and passing to a
@@ -330,13 +337,13 @@ def main(args):
     if args.parallel:
         try:
             n_cpus = min(len(zipped_args), mp.cpu_count())
-            print "Starting a parallel pool with {} processes".format(n_cpus)
+            logger.info('Starting a parallel pool with {} processes'.format(n_cpus))
         except NotImplementedError:
             n_cpus = 1
-            print "Error: cpu_count, not executing parallel processes"
+            logger.warning('Error in cpu_count, not executing parallel processes')
     else:
         n_cpus = 1
-        print "Warning: not running in parallel mode"
+        logger.info('Not running in parallel mode')
 
     start_time = time.time()
 
@@ -351,12 +358,62 @@ def main(args):
 
     end_time = time.time()
 
-    print "Processing took {:0.2f} seconds".format(end_time - start_time)
+    logger.info('Processing took {:0.2f} s'.format(end_time - start_time))
 
+    return
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        prog='popcon',
+        description=('Generates a csv file containing'
+                     ' population context features derived'
+                     ' from feature-values and metadata csv files.'
+                     )
+    )
+    parser.add_argument('--verbose', '-v', action='count')
+    parser.add_argument('--parallel', action='store_true', default=False)
+    parser.add_argument('source_dir', help='path to source directory')
+    parser.add_argument('target_dir', help='path to destination directory')
+    parser.add_argument('-m','--main_object', default="Cells", type=str,
+                        help='main object which labels the feature files')
+    parser.add_argument('-c','--centroid_object', default="Nuclei", type=str,
+                        help='object from which centroids should be taken')
+    parser.add_argument('-y','--image_size_y', default=2160, type=int,
+                        help='x-dimension of image (pixels)')
+    parser.add_argument('-x','--image_size_x', default=2560, type=int,
+                        help='x-dimension of image (pixels)')
+    parser.add_argument('-r','--radii', nargs='*', default=[],
+                        help='List of radii (pixels) for density calculations')
+    parser.add_argument('-d','--downsample', default=2, type=int,
+                        help='factor by which to downsample distances ' +
+                        'to save memory/time in density calculation')
+
+    return(parser.parse_args())
+
+
+def setup_logger(args):
+    global logger
+
+    logfile = os.path.join(
+        os.getcwd(),
+        'popcon-' + time.strftime('%Y%m%d-%H%M%S') + '.log')
+    mp_log = MultiProcessingLog(logfile, 'w', 0, 0)
+    formatter = logging.Formatter(
+        '%(asctime)s [%(thread)d] %(funcName)s %(levelname)s: %(message)s')
+    mp_log.setFormatter(formatter)
+    logger.addHandler(mp_log)
+
+    logger.setLevel(logging.INFO)
+    if args.verbose > 0:
+        logger.setLevel(logging.DEBUG)
+    print 'Logging to {} at level {}'.format(
+        logfile,logging.getLevelName(logger.getEffectiveLevel()))
     return
 
 
 if __name__ == "__main__":
     args = parse_arguments()
+    setup_logger(args)
     mp.freeze_support()
     main(args)
