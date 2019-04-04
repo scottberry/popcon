@@ -1,4 +1,5 @@
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <math.h>
 
 double metric(double x1, double y1, double x2, double y2) {
