@@ -33,6 +33,8 @@ def parse_arguments():
                         help='x-dimension of image (pixels)')
     parser.add_argument('-x','--image_size_x', default=2560, type=int,
                         help='x-dimension of image (pixels)')
+    parser.add_argument('-r','--radii', nargs='*',
+                        help='List of radii (pixels) for density calculations')
     parser.add_argument('-d','--downsample', default=2, type=int,
                         help='factor by which to downsample distances ' +
                         'to save memory/time in density calculation')
@@ -241,7 +243,8 @@ def calculate_popcon_features(
         centroid_name_y, centroid_name_x,
         image_size_y=2560, image_size_x=2160,
         downsample_factor=1,
-        object_name="Cells"):
+        object_name="Cells",
+        radii=[100,200,300]):
 
     image_shape = (image_size_y, image_size_x)
     metadata = pd.read_csv(
@@ -260,44 +263,22 @@ def calculate_popcon_features(
         features, metadata, image_shape,
         centroid_name_y, centroid_name_x
     )
-    local_cell_density_100 = get_local_density(
-        global_coordinates.df,
-        well_shape, downsample_factor,
-        global_coordinates.centroid_name_y,
-        global_coordinates.centroid_name_x,
-        object_name,radius=100)
-    local_cell_density_200 = get_local_density(
-        global_coordinates.df,
-        well_shape, downsample_factor,
-        global_coordinates.centroid_name_y,
-        global_coordinates.centroid_name_x,
-        object_name,radius=200)
-    local_cell_density_300 = get_local_density(
-        global_coordinates.df,
-        well_shape, downsample_factor,
-        global_coordinates.centroid_name_y,
-        global_coordinates.centroid_name_x,
-        object_name,radius=300)
-#    local_cell_crowding = get_local_cell_crowding(
-#        global_coordinates.df, well_shape,
-#        global_coordinates.centroid_name_y,
-#        global_coordinates.centroid_name_x,
-#        object_name,deterministic=True,reps=reps)
-    crowding = get_crowding(
+
+    popcon_features = get_crowding(
         global_coordinates.df, well_shape,
         global_coordinates.centroid_name_y,
         global_coordinates.centroid_name_x,
         object_name)
 
-    popcon_features = local_cell_density_100
-    popcon_features = popcon_features.merge(
-        local_cell_density_200,on='mapobject_id')
-    popcon_features = popcon_features.merge(
-        local_cell_density_300,on='mapobject_id')
-    popcon_features = popcon_features.merge(
-        crowding, on='mapobject_id')
-    popcon_features = popcon_features.merge(
-        global_coordinates.df, on='mapobject_id')
+    for radius in radii:
+        local_density = get_local_density(
+            global_coordinates.df,
+            well_shape, downsample_factor,
+            global_coordinates.centroid_name_y,
+            global_coordinates.centroid_name_x,
+            object_name,radius=radius)
+        popcon_features = popcon_features.merge(
+            local_density,on='mapobject_id')
 
     f = os.path.basename(features_filename).replace('feature-values','popcon')
     output_file = os.path.join(os.path.expanduser(target_dir),f)
@@ -339,7 +320,8 @@ def main(args):
         [args.image_size_y for f in features_paths],
         [args.image_size_x for f in features_paths],
         [args.downsample for f in features_paths],
-        [args.centroid_object for f in features_paths]
+        [args.centroid_object for f in features_paths],
+        [args.radii for f in features_paths]
     )
 
     # find out how many cores are available
