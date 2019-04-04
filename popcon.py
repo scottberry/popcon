@@ -1,6 +1,7 @@
 import os
 import argparse
 import glob
+import time
 import random
 import numpy as np
 import pandas as pd
@@ -21,6 +22,7 @@ def parse_arguments():
                      )
     )
     parser.add_argument('--verbose', '-v', action='count')
+    parser.add_argument('--parallel', action='store_true', default=False)
     parser.add_argument('source_dir', help='path to source directory')
     parser.add_argument('target_dir', help='path to destination directory')
     parser.add_argument('-m','--main_object', default="Cells", type=str,
@@ -340,13 +342,32 @@ def main(args):
         [args.centroid_object for f in features_paths]
     )
 
-    pool = mp.Pool()
+    # find out how many cores are available
+    if args.parallel:
+        try:
+            n_cpus = min(len(zipped_args), mp.cpu_count())
+            print "Starting a parallel pool with {} processes".format(n_cpus)
+        except NotImplementedError:
+            n_cpus = 1
+            print "Error: cpu_count, not executing parallel processes"
+    else:
+        n_cpus = 1
+        print "Warning: not running in parallel mode"
+
+    start_time = time.time()
+
+    # start the pool of workers
+    pool = mp.Pool(processes=n_cpus)
     pool.map(
         calculate_popcon_features_star,
         zipped_args
     )
     pool.close()
     pool.join()
+
+    end_time = time.time()
+
+    print "Processing took {:0.2f} seconds".format(end_time - start_time)
 
     return
 
