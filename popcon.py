@@ -33,7 +33,7 @@ def parse_arguments():
                         help='x-dimension of image (pixels)')
     parser.add_argument('-x','--image_size_x', default=2560, type=int,
                         help='x-dimension of image (pixels)')
-    parser.add_argument('-r','--radii', nargs='*',
+    parser.add_argument('-r','--radii', nargs='*', default=[],
                         help='List of radii (pixels) for density calculations')
     parser.add_argument('-d','--downsample', default=2, type=int,
                         help='factor by which to downsample distances ' +
