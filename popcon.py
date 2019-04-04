@@ -6,6 +6,7 @@ import random
 import numpy as np
 import pandas as pd
 import multiprocessing as mp
+import euclidean_distance
 from scipy import integrate
 from math import sqrt, pow
 from collections import namedtuple
@@ -86,9 +87,10 @@ def mean_euclidean_distance(x_i, y_i, x_max, y_max):
     all other points in the rectangle with vertices (0,0),(x_max,y_max)
     """
 
-    d = integrate.dblquad(lambda x, y: np.sqrt((x - x_i)**2 + (y - y_i)**2),
+    d = integrate.dblquad(lambda x, y: euclidean_distance.metric(x,y,x_i,y_i),
                           0, y_max,
                           0, x_max)
+
     area = x_max * y_max
     return d[0] / area
 
@@ -101,8 +103,6 @@ def get_crowding(
     Returns a DataFrame containing the mapobject_id and the object
     crowding with column label "Crowding" + object_type
     """
-
-    feature_name = "Crowding_" + object_type
 
     crowding_list = []
     for row in features.itertuples():
@@ -135,8 +135,7 @@ def get_crowding(
         crowding = np.mean(inverse_real_distances) * expected_mean_distance
 
         crowding_list.append({
-            feature_name: crowding,
-            'mean_distance': expected_mean_distance,
+            "Crowding_" + object_type: crowding,
             'mapobject_id': row.mapobject_id})
 
     return(pd.DataFrame(crowding_list))
@@ -264,11 +263,14 @@ def calculate_popcon_features(
         centroid_name_y, centroid_name_x
     )
 
-    popcon_features = get_crowding(
+    crowding = get_crowding(
         global_coordinates.df, well_shape,
         global_coordinates.centroid_name_y,
         global_coordinates.centroid_name_x,
         object_name)
+
+    popcon_features = global_coordinates.df.merge(
+        crowding,on='mapobject_id')
 
     for radius in radii:
         local_density = get_local_density(
