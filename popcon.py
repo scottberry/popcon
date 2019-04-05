@@ -9,7 +9,6 @@ import pandas as pd
 import multiprocessing as mp
 import euclidean_distance
 from scipy import integrate
-from math import sqrt, pow
 from collections import namedtuple
 from scipy.ndimage import gaussian_filter
 from scipy.spatial.distance import cdist
@@ -79,6 +78,9 @@ def get_crowding(
     crowding with column label "Crowding" + object_type
     """
 
+    maximal_distance = np.sqrt(float(image_shape[0])**2 +
+                               float(image_shape[1])**2)
+
     crowding_list = []
     for row in features.itertuples():
         logger.debug('Calculating crowding for cell {}'.format(row.Index))
@@ -106,8 +108,10 @@ def get_crowding(
             np.ones_like(real_distances),
             real_distances)
 
-        # normalise by the expected distance to other objects
-        crowding = np.mean(inverse_real_distances) * expected_mean_distance
+        # subtract the expected crowding and normalise by maximal distance
+        crowding = maximal_distance * \
+            (np.mean(inverse_real_distances) -
+                (1.0 / expected_mean_distance))
 
         crowding_list.append({
             "Crowding_" + object_type: crowding,
@@ -132,8 +136,8 @@ def get_local_cell_crowding(
     if (deterministic):
         random.seed(123)
 
-    maximal_distance = sqrt(
-        pow(float(image_shape[0]),2) + pow(float(image_shape[1]),2))
+    maximal_distance = np.sqrt(float(image_shape[0])**2 +
+                               float(image_shape[1])**2)
     feature_name = "LCC_" + object_type
 
     lcc = []
@@ -176,8 +180,8 @@ def get_local_cell_crowding(
             real_distances)
 
         lcc.append({
-            feature_name:
-                np.sum(inverse_real_distances) - np.sum(inverse_random_distances),
+            feature_name: (np.sum(inverse_real_distances) -
+                           np.sum(inverse_random_distances)),
             'mapobject_id': row.mapobject_id})
 
     return(pd.DataFrame(lcc))
@@ -261,6 +265,15 @@ def calculate_popcon_features(
 
     popcon_features = global_coordinates.df.merge(
         crowding,on='mapobject_id')
+
+    lcc = get_local_cell_crowding(
+        global_coordinates.df, well_shape,
+        global_coordinates.centroid_name_y,
+        global_coordinates.centroid_name_x,
+        object_name)
+
+    popcon_features = popcon_features.merge(
+        lcc,on='mapobject_id')
 
     for radius in radii:
         logger.debug(
