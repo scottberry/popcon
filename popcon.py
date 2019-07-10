@@ -216,6 +216,96 @@ def convert_local_to_global_centroids(
     return(global_centroids)
 
 
+def calculate_edge(features, metadata,
+        centroid_name_y, centroid_name_x,
+        image_size_y=2560, image_size_x=2160,
+        object_name="Nuclei",
+        edge_expansion = 200,
+        edge_site_range = 1):
+
+    # TODO: Implement a downsample_factor
+    # TODO: Add a global option => don't calculate per site, but for the whole
+    # well at the same time. Would save computation, but be expensive in RAM
+    # Edge detection: Run massive dilation based on centroids of objects
+    # Using centroids, because loading masks is slow and cell segmentation is
+    # not always available
+
+    # Parameters:
+    # How far out is an edge searched for each site? Defaults to 1 => looks at the 3x3 grid around the site
+
+    image_shape = (image_size_y, image_size_x)
+    edge_measurements = pd.DataFrame(columns = ['mapobject_id', 'DistanceToEdge', 'isEdge'])
+
+    # Function gets the parameters for a whole well, calculates site by site to avoid huge memory usage
+    metadata = metadata.assign(well_pos_combined = zip(metadata['well_pos_y'], metadata['well_pos_x']))
+    existing_sites = list(metadata['well_pos_combined'].unique())
+
+    for site in existing_sites:
+        logger.info('Edge detection for site {}'.format(site))
+        surrounding_sites = []
+        min_y = site[0]
+        min_x = site[1]
+        max_y = site[0]
+        max_x = site[1]
+        for y in range(-edge_site_range,edge_site_range +1):
+            for x in range(-edge_site_range,edge_site_range +1):
+                potential_site = (site[0] + y, site[1] + x)
+                if potential_site in existing_sites:
+                    surrounding_sites.append(potential_site)
+                    # Check if the current site is a new min or max in x or y direction
+                    if potential_site[0] < min_y:
+                        min_y = potential_site[0]
+                    if potential_site[1] < min_x:
+                        min_x = potential_site[1]
+                    if potential_site[0] > max_y:
+                        max_y = potential_site[0]
+                    if potential_site[1] > max_x:
+                        max_x = potential_site[1]
+
+        # Create a binary numpy array
+        # surrounding_size = ((max_y - min_y + 1) * image_size_y, (max_x - min_x + 1)*image_size_x)
+        surrounding_size = ((max_x - min_x + 1)*image_size_x, (max_y - min_y + 1) * image_size_y)
+        local_surrounding = np.zeros(surrounding_size, dtype=bool)
+        # Go through each image and set the centroids to True
+        # Need to calculate the position in the local_surrounding image depending on where an image is relative to the others
+        for sub_site in surrounding_sites:
+            x_shift = (sub_site[1] - min_x) * image_size_y
+            y_shift = (sub_site[0] - min_y) * image_size_x
+            subsite_centroids = features.loc[metadata['well_pos_combined'] == sub_site]
+            for row_index in range(subsite_centroids.shape[0]):
+                y_pos = int(subsite_centroids[centroid_name_y].iloc[row_index] + y_shift)
+                x_pos = int(subsite_centroids[centroid_name_x].iloc[row_index] + x_shift)
+                local_surrounding[y_pos, x_pos] = True
+
+        # Do a dilation of the points to fill in holes between cells
+        from scipy.ndimage.morphology import binary_dilation, binary_closing, distance_transform_edt
+        local_surrounding = binary_dilation(local_surrounding, iterations=edge_expansion)
+        local_surrounding = binary_closing(local_surrounding, structure=np.ones((15,15)))
+
+        # Distance transform currently treats edge as 0 => funny biases in dense regions
+        local_surrounding = distance_transform_edt(local_surrounding)
+
+        site_centroids = features.loc[metadata['well_pos_combined'] == site]
+        site_centroids = site_centroids.assign(DistanceToEdge=0)
+        site_centroids = site_centroids.assign(isEdge=0)
+        x_shift = (site[1] - min_x) * image_size_y
+        y_shift = (site[0] - min_y) * image_size_x
+        for row_index in range(site_centroids.shape[0]):
+            y_pos = int(site_centroids[centroid_name_y].iloc[row_index] + y_shift)
+            x_pos = int(site_centroids[centroid_name_x].iloc[row_index] + x_shift)
+
+            # Write values back to the data frame. For TissueMaps: Write to database here?
+            col_index = site_centroids.columns.get_loc('DistanceToEdge')
+            site_centroids.iloc[row_index, col_index] = max(local_surrounding[y_pos, x_pos] - edge_expansion, 0)
+
+            col_index2 = site_centroids.columns.get_loc('isEdge')
+            site_centroids.iloc[row_index, col_index2] = int((local_surrounding[y_pos, x_pos] - edge_expansion) <= 0)
+
+        edge_measurements = edge_measurements.append(site_centroids[['mapobject_id', 'DistanceToEdge', 'isEdge']], ignore_index=False, verify_integrity=False, sort=None)
+
+    return edge_measurements
+
+
 def calculate_popcon_features(
         target_dir,
         features_filename, metadata_filename,
@@ -223,7 +313,8 @@ def calculate_popcon_features(
         image_size_y=2560, image_size_x=2160,
         downsample_factor=1,
         object_name="Cells",
-        radii=[100,200,300]):
+        calculate_density=True,radii=[100,200,300],
+        calculate_edge=True, edge_expansion = 200, edge_site_range = 1):
 
     logger.info('Calculating popcon features')
     logger.info('features_filename: %s', features_filename)
@@ -235,6 +326,7 @@ def calculate_popcon_features(
     logger.info('centroid_name_y: %s',centroid_name_y)
     logger.info('centroid_name_x: %s',centroid_name_x)
 
+
     image_shape = (image_size_y, image_size_x)
     metadata = pd.read_csv(
         metadata_filename,
@@ -243,58 +335,72 @@ def calculate_popcon_features(
         features_filename,
         usecols=['mapobject_id', centroid_name_y, centroid_name_x])
 
-    logger.debug('Extracting well_shape from metadata_file:')
-    well_shape = (
-        int(image_size_y * (1 + metadata.well_pos_y.max())),
-        int(image_size_x * (1 + metadata.well_pos_x.max()))
-    )
-    logger.info('Well shape is {}'.format(well_shape))
-
-    global_coordinates = convert_local_to_global_centroids(
-        features, metadata, image_shape,
-        centroid_name_y, centroid_name_x
-    )
-
-    crowding = get_crowding(
-        global_coordinates.df, well_shape,
-        global_coordinates.centroid_name_y,
-        global_coordinates.centroid_name_x,
-        object_name)
-
-    logger.info('Finished crowding calculation for: {}'.format(features_filename))
-
-    popcon_features = global_coordinates.df.merge(
-        crowding,on='mapobject_id')
-
-    lcc = get_local_cell_crowding(
-        global_coordinates.df, well_shape,
-        global_coordinates.centroid_name_y,
-        global_coordinates.centroid_name_x,
-        object_name)
-
-    popcon_features = popcon_features.merge(
-        lcc,on='mapobject_id')
-
-    for radius in radii:
-        logger.debug(
-            'At Radius {}, calculating object density for: {}'.format(radius, features_filename)
+    if calculate_density:
+        logger.debug('Extracting well_shape from metadata_file:')
+        well_shape = (
+            int(image_size_y * (1 + metadata.well_pos_y.max())),
+            int(image_size_x * (1 + metadata.well_pos_x.max()))
         )
-        local_density = get_local_density(
-            global_coordinates.df,
-            well_shape, downsample_factor,
+        logger.info('Well shape is {}'.format(well_shape))
+
+        global_coordinates = convert_local_to_global_centroids(
+            features, metadata, image_shape,
+            centroid_name_y, centroid_name_x
+        )
+
+        crowding = get_crowding(
+            global_coordinates.df, well_shape,
             global_coordinates.centroid_name_y,
             global_coordinates.centroid_name_x,
-            object_name,radius=int(radius))
+            object_name)
 
-        logger.info('At Radius {}, finished density calculation for: {}'.format(radius,features_filename))
+        logger.info('Finished crowding calculation for: {}'.format(features_filename))
+
+        popcon_features = global_coordinates.df.merge(
+            crowding,on='mapobject_id')
+
+        lcc = get_local_cell_crowding(
+            global_coordinates.df, well_shape,
+            global_coordinates.centroid_name_y,
+            global_coordinates.centroid_name_x,
+            object_name)
 
         popcon_features = popcon_features.merge(
-            local_density,on='mapobject_id')
+            lcc,on='mapobject_id')
 
-    f = os.path.basename(features_filename).replace('feature-values','popcon')
-    output_file = os.path.join(os.path.expanduser(target_dir),f)
+        for radius in radii:
+            logger.debug(
+                'At Radius {}, calculating object density for: {}'.format(radius, features_filename)
+            )
+            local_density = get_local_density(
+                global_coordinates.df,
+                well_shape, downsample_factor,
+                global_coordinates.centroid_name_y,
+                global_coordinates.centroid_name_x,
+                object_name,radius=int(radius))
 
-    popcon_features.to_csv(output_file,index=False,index_label=False)
+            logger.info('At Radius {}, finished density calculation for: {}'.format(radius,features_filename))
+
+            popcon_features = popcon_features.merge(
+                local_density,on='mapobject_id')
+
+        f = os.path.basename(features_filename).replace('feature-values','popcon')
+        output_file = os.path.join(os.path.expanduser(target_dir),f)
+
+        popcon_features.to_csv(output_file,index=False,index_label=False)
+
+    if calculate_edge:
+        logger.info('edge_expansion: %d', edge_expansion)
+        logger.info('edge_site_range: %d', edge_site_range)
+
+        edge_measurements = calculate_edge(features, metadata, centroid_name_y,
+                                           centroid_name_x, image_size_y,
+                                           image_size_x, object_name,
+                                           edge_expansion, edge_site_range)
+        f = os.path.basename(features_filename).replace('feature-values','edge')
+        output_file = os.path.join(os.path.expanduser(target_dir),f)
+
+        edge_measurements.to_csv(output_file,index=False,index_label=False)
 
     return
 
@@ -343,7 +449,11 @@ def main(args):
         [args.image_size_x for f in features_paths],
         [args.downsample for f in features_paths],
         [args.centroid_object for f in features_paths],
-        [args.radii for f in features_paths]
+        [args.calculate_density for f in features_paths],
+        [args.radii for f in features_paths],
+        [args.calculate_edge for f in features_paths],
+        [args.edge_expansion for f in features_paths],
+        [args.edge_site_range for f in features_paths]
     )
 
     # find out how many cores are available
@@ -396,11 +506,21 @@ def parse_arguments():
                         help='x-dimension of image (pixels)')
     parser.add_argument('-x','--image_size_x', default=2560, type=int,
                         help='x-dimension of image (pixels)')
+    parser.add_argument('--calculate_density', action='store_true',
+                        help='Whether density measurements should be made')
     parser.add_argument('-r','--radii', nargs='*', default=[],
                         help='List of radii (pixels) for density calculations')
     parser.add_argument('-d','--downsample', default=2, type=int,
                         help='factor by which to downsample distances ' +
                         'to save memory/time in density calculation')
+    parser.add_argument('--calculate_edge', action='store_true',
+                        help='Whether edge detection should be performed')
+    parser.add_argument('-exp','--edge_expansion', default=200, type=int,
+                        help='Amount of expansion of centroids for edge' +
+                        'detection (in pixels)')
+    parser.add_argument('-er','--edge_site_range', default=1, type=int,
+                        help='What radius of surrounding sites is used for' +
+                        'edge detection. 1 equals 3x3 sites')
 
     return(parser.parse_args())
 
