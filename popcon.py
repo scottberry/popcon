@@ -546,23 +546,23 @@ def setup_logger(args):
 
 
 if __name__ == "__main__":
-    target_dir = '/Users/Joel/Desktop/'
-    features_filename = '/Users/Joel/shares/workShareJoel/20190705_popcon_test/20190505-WTC-PermeabilizationTest5_p1_B02_Nuclei_feature-values.csv'
-    metadata_filename = '/Users/Joel/shares/workShareJoel/20190705_popcon_test/20190505-WTC-PermeabilizationTest5_p1_B02_Nuclei_metadata.csv'
-    centroid_name_y = 'Morphology_Local_Centroid_y'
-    centroid_name_x ='Morphology_Local_Centroid_x'
-
-
-    calculate_popcon_features(
-            target_dir,
-            features_filename, metadata_filename,
-            centroid_name_y, centroid_name_x,
-            image_size_y=2560, image_size_x=2160,
-            downsample_factor=1,
-            object_name="Cells",
-            calculate_density=False,radii=[100,200,300],
-            find_edge=True, edge_expansion = 200, edge_site_range = 1)
-#     args = parse_arguments()
-#     setup_logger(args)
-#     mp.freeze_support()
-#     main(args)
+    # target_dir = '/Users/Joel/Desktop/'
+    # features_filename = '/Users/Joel/shares/workShareJoel/20190705_popcon_test/20190505-WTC-PermeabilizationTest5_p1_B02_Nuclei_feature-values.csv'
+    # metadata_filename = '/Users/Joel/shares/workShareJoel/20190705_popcon_test/20190505-WTC-PermeabilizationTest5_p1_B02_Nuclei_metadata.csv'
+    # centroid_name_y = 'Morphology_Local_Centroid_y'
+    # centroid_name_x ='Morphology_Local_Centroid_x'
+    #
+    #
+    # calculate_popcon_features(
+    #         target_dir,
+    #         features_filename, metadata_filename,
+    #         centroid_name_y, centroid_name_x,
+    #         image_size_y=2560, image_size_x=2160,
+    #         downsample_factor=1,
+    #         object_name="Cells",
+    #         calculate_density=False,radii=[100,200,300],
+    #         find_edge=True, edge_expansion = 200, edge_site_range = 1)
+    args = parse_arguments()
+    setup_logger(args)
+    mp.freeze_support()
+    main(args)
