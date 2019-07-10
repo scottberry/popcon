@@ -314,7 +314,7 @@ def calculate_popcon_features(
         downsample_factor=1,
         object_name="Cells",
         calculate_density=True,radii=[100,200,300],
-        calculate_edge=True, edge_expansion = 200, edge_site_range = 1):
+        find_edge=True, edge_expansion = 200, edge_site_range = 1):
 
     logger.info('Calculating popcon features')
     logger.info('features_filename: %s', features_filename)
@@ -389,7 +389,7 @@ def calculate_popcon_features(
 
         popcon_features.to_csv(output_file,index=False,index_label=False)
 
-    if calculate_edge:
+    if find_edge:
         logger.info('edge_expansion: %d', edge_expansion)
         logger.info('edge_site_range: %d', edge_site_range)
 
@@ -451,7 +451,7 @@ def main(args):
         [args.centroid_object for f in features_paths],
         [args.calculate_density for f in features_paths],
         [args.radii for f in features_paths],
-        [args.calculate_edge for f in features_paths],
+        [args.find_edge for f in features_paths],
         [args.edge_expansion for f in features_paths],
         [args.edge_site_range for f in features_paths]
     )
@@ -513,7 +513,7 @@ def parse_arguments():
     parser.add_argument('-d','--downsample', default=2, type=int,
                         help='factor by which to downsample distances ' +
                         'to save memory/time in density calculation')
-    parser.add_argument('--calculate_edge', action='store_true',
+    parser.add_argument('--find_edge', action='store_true',
                         help='Whether edge detection should be performed')
     parser.add_argument('-exp','--edge_expansion', default=200, type=int,
                         help='Amount of expansion of centroids for edge' +
@@ -546,7 +546,23 @@ def setup_logger(args):
 
 
 if __name__ == "__main__":
-    args = parse_arguments()
-    setup_logger(args)
-    mp.freeze_support()
-    main(args)
+    target_dir = '/Users/Joel/Desktop/'
+    features_filename = '/Users/Joel/shares/workShareJoel/20190705_popcon_test/20190505-WTC-PermeabilizationTest5_p1_B02_Nuclei_feature-values.csv'
+    metadata_filename = '/Users/Joel/shares/workShareJoel/20190705_popcon_test/20190505-WTC-PermeabilizationTest5_p1_B02_Nuclei_metadata.csv'
+    centroid_name_y = 'Morphology_Local_Centroid_y'
+    centroid_name_x ='Morphology_Local_Centroid_x'
+
+
+    calculate_popcon_features(
+            target_dir,
+            features_filename, metadata_filename,
+            centroid_name_y, centroid_name_x,
+            image_size_y=2560, image_size_x=2160,
+            downsample_factor=1,
+            object_name="Cells",
+            calculate_density=False,radii=[100,200,300],
+            find_edge=True, edge_expansion = 200, edge_site_range = 1)
+#     args = parse_arguments()
+#     setup_logger(args)
+#     mp.freeze_support()
+#     main(args)
