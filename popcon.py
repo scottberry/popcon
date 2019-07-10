@@ -218,7 +218,7 @@ def convert_local_to_global_centroids(
 
 def calculate_edge(features, metadata,
         centroid_name_y, centroid_name_x,
-        image_size_y=2560, image_size_x=2160,
+        image_size_y=2160, image_size_x=2560,
         object_name="Nuclei",
         edge_expansion = 200,
         edge_site_range = 1):
@@ -233,7 +233,6 @@ def calculate_edge(features, metadata,
     # Parameters:
     # How far out is an edge searched for each site? Defaults to 1 => looks at the 3x3 grid around the site
 
-    image_shape = (image_size_y, image_size_x)
     edge_measurements = pd.DataFrame(columns = ['mapobject_id', 'DistanceToEdge', 'isEdge'])
 
     # Function gets the parameters for a whole well, calculates site by site to avoid huge memory usage
@@ -263,18 +262,19 @@ def calculate_edge(features, metadata,
                         max_x = potential_site[1]
 
         # Create a binary numpy array
-        # surrounding_size = ((max_y - min_y + 1) * image_size_y, (max_x - min_x + 1)*image_size_x)
-        surrounding_size = ((max_x - min_x + 1)*image_size_x, (max_y - min_y + 1) * image_size_y)
+        surrounding_size = ((max_y - min_y + 1)*image_size_y, (max_x - min_x + 1)* image_size_x)
         local_surrounding = np.zeros(surrounding_size, dtype=bool)
         # Go through each image and set the centroids to True
         # Need to calculate the position in the local_surrounding image depending on where an image is relative to the others
         for sub_site in surrounding_sites:
-            x_shift = (sub_site[1] - min_x) * image_size_y
-            y_shift = (sub_site[0] - min_y) * image_size_x
+            x_shift = (sub_site[1] - min_x) * image_size_x
+            y_shift = (sub_site[0] - min_y) * image_size_y
             subsite_centroids = features.loc[metadata['well_pos_combined'] == sub_site]
             for row_index in range(subsite_centroids.shape[0]):
                 y_pos = int(subsite_centroids[centroid_name_y].iloc[row_index] + y_shift)
                 x_pos = int(subsite_centroids[centroid_name_x].iloc[row_index] + x_shift)
+                # print(subsite_centroids[centroid_name_y].iloc[row_index], subsite_centroids[centroid_name_x].iloc[row_index])
+                # print(y_pos, x_pos)
                 local_surrounding[y_pos, x_pos] = True
 
         # Do a dilation of the points to fill in holes between cells
@@ -288,8 +288,8 @@ def calculate_edge(features, metadata,
         site_centroids = features.loc[metadata['well_pos_combined'] == site]
         site_centroids = site_centroids.assign(DistanceToEdge=0)
         site_centroids = site_centroids.assign(isEdge=0)
-        x_shift = (site[1] - min_x) * image_size_y
-        y_shift = (site[0] - min_y) * image_size_x
+        x_shift = (site[1] - min_x) * image_size_x
+        y_shift = (site[0] - min_y) * image_size_y
         for row_index in range(site_centroids.shape[0]):
             y_pos = int(site_centroids[centroid_name_y].iloc[row_index] + y_shift)
             x_pos = int(site_centroids[centroid_name_x].iloc[row_index] + x_shift)
@@ -310,7 +310,7 @@ def calculate_popcon_features(
         target_dir,
         features_filename, metadata_filename,
         centroid_name_y, centroid_name_x,
-        image_size_y=2560, image_size_x=2160,
+        image_size_y=2160, image_size_x=2560,
         downsample_factor=1,
         object_name="Cells",
         calculate_density=True,radii=[100,200,300],
@@ -546,22 +546,6 @@ def setup_logger(args):
 
 
 if __name__ == "__main__":
-    # target_dir = '/Users/Joel/Desktop/'
-    # features_filename = '/Users/Joel/shares/workShareJoel/20190705_popcon_test/20190505-WTC-PermeabilizationTest5_p1_B02_Nuclei_feature-values.csv'
-    # metadata_filename = '/Users/Joel/shares/workShareJoel/20190705_popcon_test/20190505-WTC-PermeabilizationTest5_p1_B02_Nuclei_metadata.csv'
-    # centroid_name_y = 'Morphology_Local_Centroid_y'
-    # centroid_name_x ='Morphology_Local_Centroid_x'
-    #
-    #
-    # calculate_popcon_features(
-    #         target_dir,
-    #         features_filename, metadata_filename,
-    #         centroid_name_y, centroid_name_x,
-    #         image_size_y=2560, image_size_x=2160,
-    #         downsample_factor=1,
-    #         object_name="Cells",
-    #         calculate_density=False,radii=[100,200,300],
-    #         find_edge=True, edge_expansion = 200, edge_site_range = 1)
     args = parse_arguments()
     setup_logger(args)
     mp.freeze_support()
