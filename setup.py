@@ -7,8 +7,7 @@ ext_modules = [
     Extension(
         'euclidean_distance',
         ['euclidean_distance.cpp'],
-        include_dirs=['/usr/local/include/python2.7',
-                      pybind11.get_include(),
+        include_dirs=[pybind11.get_include(),
                       pybind11.get_include(user=True)],
         libraries=['gmp'],
         language='c++',
@@ -17,13 +16,17 @@ ext_modules = [
 ]
 
 setup(
-    name='euclidean_distance',
+    name='popcon',
     version='0.0.1',
     author='Scott Berry',
     author_email='scottdberry@gmail.com',
     description='Implementation of euclidean distance in C',
     install_requires=[
-        'pybind11>=2.2.1'
+        'pybind11>=2.2.1',
+	'numpy',
+	'pandas',
+	'scipy'
     ],
+    setup_requires=['pybind11>=2.2.1'],
     ext_modules=ext_modules,
 )
