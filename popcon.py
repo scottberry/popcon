@@ -359,14 +359,14 @@ def calculate_popcon_features(
         popcon_features = global_coordinates.df.merge(
             crowding,on='mapobject_id')
 
-        lcc = get_local_cell_crowding(
-            global_coordinates.df, well_shape,
-            global_coordinates.centroid_name_y,
-            global_coordinates.centroid_name_x,
-            object_name)
+        #lcc = get_local_cell_crowding(
+        #    global_coordinates.df, well_shape,
+        #    global_coordinates.centroid_name_y,
+        #    global_coordinates.centroid_name_x,
+        #    object_name)
 
-        popcon_features = popcon_features.merge(
-            lcc,on='mapobject_id')
+        #popcon_features = popcon_features.merge(
+        #    lcc,on='mapobject_id')
 
         for radius in radii:
             logger.debug(
